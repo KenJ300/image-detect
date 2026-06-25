@@ -39,6 +39,7 @@ CALL FROM NODE:
 import io
 import os
 import threading
+from pathlib import Path
 
 # --- config (override via env vars) ---
 REPO     = os.getenv("MODEL_REPO", "kesimeg/yolov8n-clothing-detection")
@@ -50,7 +51,7 @@ THREADS  = int(os.getenv("THREADS", "4"))       # torch/OMP threads *per worker*
 WORKERS  = int(os.getenv("WORKERS", "1"))       # uvicorn worker processes (each loads its own model)
 MAX_SIDE = int(os.getenv("MAX_SIDE", "1280"))   # downscale before inference; 0 = disabled
 MAX_DET  = int(os.getenv("MAX_DET", "10"))      # cap NMS output (4 classes; few items per photo)
-MODEL_PATH = os.getenv("MODEL_PATH", "/app/model")
+MODEL_PATH = os.getenv("MODEL_PATH", "/app/clothing_openvino_model")
 HOST     = os.getenv("HOST", "127.0.0.1")
 PORT     = int(os.getenv("PORT", "8000"))
 
@@ -68,11 +69,14 @@ from ultralytics import YOLO
 from huggingface_hub import hf_hub_download, list_repo_files
 
 
-def _is_openvino_dir(path: str) -> bool:
-    try:
-        return os.path.isdir(path) and any(name.endswith(".xml") for name in os.listdir(path))
-    except OSError:
-        return False
+def _openvino_model_path(path: str) -> str | None:
+    """Return path if it is an Ultralytics OpenVINO export directory."""
+    p = Path(path)
+    if not p.is_dir() or "_openvino_model" not in p.name:
+        return None
+    if not any(p.glob("*.xml")):
+        return None
+    return str(p)
 
 
 def _predict_kwargs(imgsz: int) -> dict:
@@ -87,12 +91,13 @@ def _predict_kwargs(imgsz: int) -> dict:
 
 
 def _load_model():
-    if _is_openvino_dir(MODEL_PATH):
-        m = YOLO(MODEL_PATH)
+    ov_path = _openvino_model_path(MODEL_PATH)
+    if ov_path:
+        m = YOLO(ov_path, task="detect")
         backend = "openvino"
     else:
         pt = next(f for f in list_repo_files(REPO) if f.endswith(".pt"))
-        m = YOLO(hf_hub_download(REPO, pt))
+        m = YOLO(hf_hub_download(REPO, pt), task="detect")
         backend = "pytorch"
     m.predict(Image.new("RGB", (IMGSZ, IMGSZ)), **_predict_kwargs(IMGSZ))  # warmup
     return m, backend
@@ -127,7 +132,7 @@ def health():
         "max_side": MAX_SIDE,
         "max_det": MAX_DET,
         "backend": MODEL_BACKEND,
-        "model_path": MODEL_PATH if _is_openvino_dir(MODEL_PATH) else REPO,
+        "model_path": MODEL_PATH if _openvino_model_path(MODEL_PATH) else REPO,
         "threads_per_worker": THREADS,
         "workers": WORKERS,
     }

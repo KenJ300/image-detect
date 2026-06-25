@@ -12,7 +12,10 @@ from ultralytics import YOLO
 
 REPO = os.getenv("MODEL_REPO", "kesimeg/yolov8n-clothing-detection")
 IMGSZ = int(os.getenv("IMGSZ", "416"))
-DEST = Path(os.getenv("MODEL_PATH", "/app/model"))
+# Ultralytics detects OpenVINO by "_openvino_model" in the directory name.
+DEST = Path(os.getenv("MODEL_PATH", "/app/clothing_openvino_model"))
+if "_openvino_model" not in DEST.name:
+    raise SystemExit(f"MODEL_PATH directory name must contain '_openvino_model', got: {DEST.name}")
 
 
 def main():
