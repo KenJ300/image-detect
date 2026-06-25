@@ -17,7 +17,11 @@ COPY clothing_sidecar.py .
 
 ENV HOST=0.0.0.0 \
     PORT=8000 \
-    HF_HOME=/cache/huggingface
+    HF_HOME=/cache/huggingface \
+    IMGSZ=416 \
+    THREADS=4 \
+    WORKERS=4 \
+    MAX_SIDE=1280
 
 # Pre-download model weights at build time (needs network during `docker build`)
 RUN python -c "\
@@ -28,4 +32,4 @@ hf_hub_download(repo, pt)"
 
 EXPOSE 8000
 
-CMD ["uvicorn", "clothing_sidecar:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python", "clothing_sidecar.py"]
