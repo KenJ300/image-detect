@@ -13,22 +13,21 @@ RUN pip install --no-cache-dir \
     torch torchvision --index-url https://download.pytorch.org/whl/cpu \
     && pip install --no-cache-dir -r requirements.txt
 
-COPY clothing_sidecar.py .
+COPY clothing_sidecar.py export_model.py .
 
 ENV HOST=0.0.0.0 \
     PORT=8000 \
     HF_HOME=/cache/huggingface \
+    YOLO_CONFIG_DIR=/tmp/Ultralytics \
+    MODEL_PATH=/app/model \
     IMGSZ=416 \
     THREADS=4 \
     WORKERS=4 \
-    MAX_SIDE=1280
+    MAX_SIDE=1280 \
+    MAX_DET=10
 
-# Pre-download model weights at build time (needs network during `docker build`)
-RUN python -c "\
-from huggingface_hub import hf_hub_download, list_repo_files; \
-repo='kesimeg/yolov8n-clothing-detection'; \
-pt=next(f for f in list_repo_files(repo) if f.endswith('.pt')); \
-hf_hub_download(repo, pt)"
+# Download weights + export OpenVINO FP16 model (needs network during `docker build`)
+RUN python export_model.py
 
 EXPOSE 8000
 

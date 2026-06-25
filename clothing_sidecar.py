@@ -49,11 +49,15 @@ IOU      = float(os.getenv("IOU", "0.45"))
 THREADS  = int(os.getenv("THREADS", "4"))       # torch/OMP threads *per worker*
 WORKERS  = int(os.getenv("WORKERS", "1"))       # uvicorn worker processes (each loads its own model)
 MAX_SIDE = int(os.getenv("MAX_SIDE", "1280"))   # downscale before inference; 0 = disabled
+MAX_DET  = int(os.getenv("MAX_DET", "10"))      # cap NMS output (4 classes; few items per photo)
+MODEL_PATH = os.getenv("MODEL_PATH", "/app/model")
 HOST     = os.getenv("HOST", "127.0.0.1")
 PORT     = int(os.getenv("PORT", "8000"))
 
-# keep CPU threads sane *before* torch is imported (avoids oversubscription)
+# ultralytics / BLAS thread limits — set before heavy imports
+os.environ.setdefault("YOLO_CONFIG_DIR", "/tmp/Ultralytics")
 os.environ.setdefault("OMP_NUM_THREADS", str(THREADS))
+os.environ.setdefault("MKL_NUM_THREADS", str(THREADS))
 
 import torch
 torch.set_num_threads(THREADS)
@@ -64,15 +68,37 @@ from ultralytics import YOLO
 from huggingface_hub import hf_hub_download, list_repo_files
 
 
+def _is_openvino_dir(path: str) -> bool:
+    try:
+        return os.path.isdir(path) and any(name.endswith(".xml") for name in os.listdir(path))
+    except OSError:
+        return False
+
+
+def _predict_kwargs(imgsz: int) -> dict:
+    return {
+        "imgsz": imgsz,
+        "verbose": False,
+        "device": "cpu",
+        "max_det": MAX_DET,
+        "augment": False,
+        "save": False,
+    }
+
+
 def _load_model():
-    # filename-agnostic: grab whatever .pt the repo ships
-    pt = next(f for f in list_repo_files(REPO) if f.endswith(".pt"))
-    m = YOLO(hf_hub_download(REPO, pt))
-    m.predict(Image.new("RGB", (IMGSZ, IMGSZ)), imgsz=IMGSZ, verbose=False)  # warmup
-    return m
+    if _is_openvino_dir(MODEL_PATH):
+        m = YOLO(MODEL_PATH)
+        backend = "openvino"
+    else:
+        pt = next(f for f in list_repo_files(REPO) if f.endswith(".pt"))
+        m = YOLO(hf_hub_download(REPO, pt))
+        backend = "pytorch"
+    m.predict(Image.new("RGB", (IMGSZ, IMGSZ)), **_predict_kwargs(IMGSZ))  # warmup
+    return m, backend
 
 
-model = _load_model()
+model, MODEL_BACKEND = _load_model()
 NAMES = model.names           # e.g. {0:'Clothing', 1:'Shoes', 2:'Bags', 3:'Accessories'}
 # Serializes inference within one worker; parallel requests use separate worker processes.
 LOCK  = threading.Lock()
@@ -99,6 +125,9 @@ def health():
         "classes": NAMES,
         "imgsz": IMGSZ,
         "max_side": MAX_SIDE,
+        "max_det": MAX_DET,
+        "backend": MODEL_BACKEND,
+        "model_path": MODEL_PATH if _is_openvino_dir(MODEL_PATH) else REPO,
         "threads_per_worker": THREADS,
         "workers": WORKERS,
     }
@@ -120,7 +149,12 @@ def detect(
     img_in, scale_x, scale_y = _prepare_image(img)
     effective_conf = max(conf, MIN_CONF)
     with LOCK:
-        res = model.predict(img_in, imgsz=imgsz, conf=effective_conf, iou=IOU, verbose=False)[0]
+        res = model.predict(
+            img_in,
+            conf=effective_conf,
+            iou=IOU,
+            **_predict_kwargs(imgsz),
+        )[0]
 
     boxes = []
     for b in res.boxes:
