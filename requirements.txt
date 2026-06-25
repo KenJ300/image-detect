@@ -1,0 +1,6 @@
+fastapi
+uvicorn[standard]
+ultralytics
+huggingface_hub
+pillow
+python-multipart

@@ -1,0 +1,17 @@
+services:
+  clothing-sidecar:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "8000"
+      CONF: "0.7"
+      MIN_CONF: "0.6"
+      THREADS: "4"
+    volumes:
+      # optional: persist Hugging Face cache across rebuilds
+      - hf-cache:/cache/huggingface
+
+volumes:
+  hf-cache:
